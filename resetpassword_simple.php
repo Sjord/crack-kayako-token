@@ -11,7 +11,7 @@
  **/
 function BuildHash()
 {
-	return BuildHashBlock() . BuildHashBlock() . BuildHashBlock() . BuildHashBlock();
+    return BuildHashBlock() . BuildHashBlock() . BuildHashBlock() . BuildHashBlock();
 }
 
 /**
@@ -20,12 +20,12 @@ function BuildHash()
 function BuildHashBlock()
 {
     $sub = mt_rand(0, 36 * 36 * 36);
-	$Ch1to3 = $sub - 1;		// largest alphanum power that'll fit in the minimum guaranteed 16-bit range for mt_randmax()
+    $Ch1to3 = $sub - 1;
     $sec = mt_rand(0, 36 * 36);
-	$Ch4to5 = $sec - 1;
-	$Ch6to8 = hexdec(substr(uniqid(), -6)) % (36 * 36 * 36);  // only want the bottom two characters of entropy, but clip a large range to keep from much influencing probability
+    $Ch4to5 = $sec - 1;
+    $Ch6to8 = hexdec(substr(uniqid(), -6)) % (36 * 36 * 36);
 
-	return str_pad(base_convert($Ch1to3, 10, 36), 3, '0', STR_PAD_LEFT) . str_pad(base_convert($Ch4to5, 10, 36), 2, '0', STR_PAD_LEFT) . str_pad(base_convert($Ch6to8, 10, 36), 3, '0', STR_PAD_LEFT);
+    return str_pad(base_convert($Ch1to3, 10, 36), 3, '0', STR_PAD_LEFT) . str_pad(base_convert($Ch4to5, 10, 36), 2, '0', STR_PAD_LEFT) . str_pad(base_convert($Ch6to8, 10, 36), 3, '0', STR_PAD_LEFT);
 }
 
 /**

